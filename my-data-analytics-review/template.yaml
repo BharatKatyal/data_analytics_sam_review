@@ -14,11 +14,18 @@ Resources:
       CodeUri: ecom_order_generator/
       Handler: app.lambda_handler
       Runtime: python3.9
+      Timeout: 90
+      Policies:
+        - AmazonKinesisFullAccess
+        - AmazonS3FullAccess
+        - AWSLambda_FullAccess
       Architectures:
         - x86_64
       Environment:
         Variables:
           KinesisStreamName: !Ref MyDataStreamEcomEvents
+          BucketName: !Ref MyDataDestinationBucket
+          
   MyDataStreamEcomEvents:
     Type: AWS::Kinesis::Stream
     Properties:
@@ -27,6 +34,9 @@ Resources:
         KeyId: alias/aws/kinesis
       StreamModeDetails:
         StreamMode: ON_DEMAND
+      RetentionPeriodHours: 24
+
+
   MyDataDestinationBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -42,6 +52,9 @@ Resources:
         BucketARN: !GetAtt MyDataDestinationBucket.Arn
         RoleARN: !GetAtt FirehoseAccessRole.Arn
         Prefix: myprefix
+        BufferingHints:
+          IntervalInSeconds: 10
+          SizeInMBs: 1
   # KinesisFirehoseRole:
   #   Type: AWS::IAM::Role
   #   Properties:
@@ -86,12 +99,40 @@ Resources:
             Action: 
               - "sts:AssumeRole"
       Policies:
+        - PolicyName: FirehoseAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action: 
+                  - "s3:AbortMultipartUpload"
+                  - "s3:GetBucketLocation"
+                  - "s3:GetObject"
+                  - "s3:ListBucket"
+                  - "s3:ListBucketMultipartUploads"
+                  - "s3:PutObject"
+                Resource:
+                  - !GetAtt MyDataDestinationBucket.Arn
+                  - !Sub ${MyDataDestinationBucket.Arn}/*
+              - Effect: "Allow"
+                Action: 
+                  - "kinesis:DescribeStream"
+                  - "kinesis:GetShardIterator"
+                  - "kinesis:GetRecords"
+                  - "kinesis:ListShards"
+                  - "kinesis:PutRecord"
+                  - "kinesis:PutRecords"
+                Resource: !GetAtt MyDataStreamEcomEvents.Arn
         - PolicyName: S3WritePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               Action:
                 - s3:PutObject
+                - s3:PutObjectAcl
+                - s3:GetObject
+                - s3:ListBucket
+                
               Effect: Allow
               Resource:
                 - !GetAtt MyDataDestinationBucket.Arn
