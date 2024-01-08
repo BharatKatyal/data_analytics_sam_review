@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  my-data-analytics-review
+  Sample SAM Template for my-data-analytics-review
+Globals:
+  Function:
+    Timeout: 3
+    MemorySize: 128
+Resources:
+  EcommerceOrderFunctionGeneateData:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ecom_order_generator/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          KinesisStreamName: !Ref MyDataStreamEcomEvents
+  MyDataStreamEcomEvents:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+      StreamModeDetails:
+        StreamMode: ON_DEMAND
+  MyDataDestinationBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub my-data-destination-${AWS::AccountId}-${AWS::Region}
+  MyFireHoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: MyDeliveryStream
+      KinesisStreamSourceConfiguration:
+        KinesisStreamARN: !GetAtt MyDataStreamEcomEvents.Arn
+        RoleARN: !GetAtt FirehoseAccessRole.Arn
+      S3DestinationConfiguration:
+        BucketARN: !GetAtt MyDataDestinationBucket.Arn
+        RoleARN: !GetAtt FirehoseAccessRole.Arn
+        Prefix: myprefix
+  # KinesisFirehoseRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: 2012-10-17
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service: firehose.amazonaws.com
+  #           Action: sts:AssumeRole
+  #     Policies:
+  #       - PolicyName: KinesisFirehosePolicy
+  #         PolicyDocument:
+  #           Version: 2012-10-17
+  #           Statement:
+  #             - Effect: Allow
+  #               Action:
+  #                 - s3:AbortMultipartUpload
+  #                 - s3:GetBucketLocation
+  #                 - s3:GetObject
+  #                 - s3:ListBucket
+  #                 - s3:ListBucketMultipartUploads
+  #                 - s3:PutObject
+  #               Resource:
+  #                 - !GetAtt MyDataDestinationBucket.Arn
+  #                 - !Sub ${MyDataDestinationBucket.Arn}/*
+  #             - Effect: Allow
+  #               Action:
+  #                 - kinesis:DescribeStream
+  #                 - kinesis:GetShardIterator
+
+  # Access role for Firehose
+  FirehoseAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "firehose.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: S3WritePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              Action:
+                - s3:PutObject
+              Effect: Allow
+              Resource:
+                - !GetAtt MyDataDestinationBucket.Arn
+                - !Sub ${MyDataDestinationBucket.Arn}/*
+        # - PolicyName: LambdaInvokePolicy
+        #   PolicyDocument:
+        #     Version: '2012-10-17'
+        #     Statement:
+        #       Action:
+        #         - lambda:InvokeFunction
+        #       Effect: Allow
+        #       Resource:
+        #         - !GetAtt ProcessFunction.Arn
+
+  MyTestReviewGlueDB:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub my-test-review-glue-db-${AWS::AccountId}
+        Description: Database to hold tables for my-test-review
+  Crawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://${MyDataDestinationBucket}/loadraw/
+      Role: !GetAtt CFNRoleCovidLake.Arn
+      DatabaseName: !Ref MyTestReviewGlueDB
+  CFNRoleCovidLake:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+  ApplicationResourceGroup:
+    Type: AWS::ResourceGroups::Group
+    Properties:
+      Name: !Sub ApplicationInsights-SAM-${AWS::StackName}
+      ResourceQuery:
+        Type: CLOUDFORMATION_STACK_1_0
+  ApplicationInsightsMonitoring:
+    Type: AWS::ApplicationInsights::Application
+    Properties:
+      ResourceGroupName: !Ref ApplicationResourceGroup
+      AutoConfigurationEnabled: 'true'
